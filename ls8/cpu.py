@@ -1,109 +1,59 @@
 """CPU functionality."""
 
 import sys
-from datetime import datetime
 
+HLT = 0b00000001
+LDI = 0b10000010
+PRN = 0b01000111
+MUL = 0b10100010
+PUSH = 0b1000101
+POP = 0b01000110
+
+SP = 7
 class CPU:
     """Main CPU class."""
 
     def __init__(self):
         """Construct a new CPU."""
-        self.ram = [0] * 256
-        self.reg = [0,0,0,0,0,0,0,0]
-        self.running = False
+        self.registers = [0] * 8
+        self.registers[7] = 0xF4
         self.pc = 0
-        self.sp = 7
-        self.reg[self.sp] = 0xf4
-        self.IS = 6
-        self.reg[self.IS] = 0b00000000
-        self.IM = 5
-        self.reg[self.IM] = 0b00000000
-        self.fl = 4
-        self.reg[self.fl] = 0b00000000
-        self.time = int(datetime.now().strftime("%Y-%m-%d %H:%M:%S")[-2:])
-        self.branch_table = {}
-        self.branch_table[0b10000010] = self.LDI
-        self.branch_table[0b01000111] = self.PRN
-        self.branch_table[0b00000001] = self.HLT
-        self.branch_table[0b10100000] = self.ADD
-        self.branch_table[0b10100010] = self.MUL
-        self.branch_table[0b01000101] = self.PUSH
-        self.branch_table[0b01000110] = self.POP
-        self.branch_table[0b01010000] = self.CALL
-        self.branch_table[0b00010001] = self.RET
-        self.branch_table[0b10100111] = self.CMP
-        self.branch_table[0b01010100] = self.JMP
-        self.branch_table[0b01010101] = self.JEQ
-        self.branch_table[0b01010110] = self.JNE
-        self.branch_table[0b10000100] = self.ST
-        self.branch_table[0b01001000] = self.PRA
-        self.branch_table[0b00010011] = self.IRET
-        
-    def ram_read(self, address):
-        return self.ram[address]
+        self.ram = [0] * 256
+        self.halted = False
 
-    def ram_write(self, value, address):
-        self.ram[address] = value
-
-    def LDI(self):
-        operand_a = self.ram[self.pc + 1]
-        operand_b = self.ram[self.pc + 2]
-        self.reg[operand_a] = operand_b
-        self.pc += 3
-
-    def PRN(self):
-        operand_a = self.ram[self.pc + 1]
-        print(self.reg[operand_a])
-        self.pc += 2
-
-    def HLT(self):
-        self.running = False
-
-    def ADD(self):
-        operand_a = self.ram[self.pc + 1]
-        operand_b = self.ram[self.pc + 2]
-        self.alu("ADD", operand_a, operand_b)
-        self.pc += 3
-
-    def MUL(self):
-        operand_a = self.ram[self.pc + 1]
-        operand_b = self.ram[self.pc + 2]
-        self.alu('MULTIPLY', operand_a, operand_b)
-        self.pc += 3
-
-    def load(self):
+    def load(self, filename):
         """Load a program into memory."""
 
         address = 0
 
-        if len(sys.argv) != 2:
-            print('usage: cpu.py filename')
-            sys.exit(1)
+        # open the file
+        with open(filename) as my_file:
+            # go through each line to parse and get the instruction
+            for line in my_file:
+                # try and get the instruction/operand in the line
+                comment_split = line.split("#")
+                maybe_binary_number = comment_split[0]
 
-        try:
-            with open(sys.argv[1]) as f:
-                for line in f:
-                    comment_split = line.split('#')
-                    code_snip = comment_split[0].strip()
-
-                    if code_snip == '':
-                        continue
-                    
-                    binary = int(code_snip, 2)
-                    self.ram[address] = binary
+                # wrap in a try/except block in case not a binary number
+                try:
+                    # save to x a binary number, base 2
+                    x = int(maybe_binary_number, 2)
+                    self.ram_write(x, address)
                     address += 1
+                except:
+                    print("oops, error")
+                    # or could just put 'continue'
 
-        except FileNotFoundError:
-            print(f'{sys.argv[1]} could not be found')
-            sys.exit(2)
 
 
     def alu(self, op, reg_a, reg_b):
         """ALU operations."""
 
-        if op == "ADD":
-            self.reg[reg_a] += self.reg[reg_b]
-        #elif op == "SUB": etc
+        # if op == "ADD":
+        #     self.reg[reg_a] += self.reg[reg_b]
+        if op == MUL:
+            self.registers[reg_a] = self.registers[reg_a] * self.registers[reg_b]
+            self.pc += 3
         else:
             raise Exception("Unsupported ALU operation")
 
@@ -127,50 +77,54 @@ class CPU:
 
         print()
 
+    def ram_read(self, address):
+        return self.ram[address]
+
+    def ram_write(self, value, address):
+        self.ram[address] = value
+
     def run(self):
         """Run the CPU."""
-        self.running = True
-    
-        while self.running:
-            if int(datetime.now().strftime("%Y-%m-%d %H:%M:%S")[-2:]) == self.time + 1:
-                self.reg[self.IS] = 0b00000001
+        while not self.halted:
+            instruction_to_execute = self.ram_read(self.pc)
+            operand_a = self.ram_read(self.pc + 1)
+            operand_b = self.ram_read(self.pc + 2)
+            self.execute_instruction(instruction_to_execute, operand_a, operand_b)
 
-            elif bin(self.reg[self.IS]) == '0b1' :
-                masked_interrupts = self.reg[self.IM] & self.reg[self.IS]
+    def execute_instruction(self, instruction, operand_a, operand_b):
+        if instruction == HLT:
+            self.halted = True
+            self.pc += 1
 
-                for i in range(8):
-                    interrupt_happened = ((masked_interrupts >> i) & 1) == 1
-                    if interrupt_happened:
-                        self.reg[self.IS] = 0b00000000
-                        self.ram[self.reg[self.sp]] = self.pc
-                        self.reg[self.sp] -= 1
-                        self.ram[self.reg[self.sp]] = self.reg[self.fl]
-                        self.reg[self.sp] -= 1
-                        self.ram[self.reg[self.sp]] = self.reg[0]
-                        self.reg[self.sp] -= 1
-                        self.ram[self.reg[self.sp]] = self.reg[1]
-                        self.reg[self.sp] -= 1
-                        self.ram[self.reg[self.sp]] = self.reg[2]
-                        self.reg[self.sp] -= 1
-                        self.ram[self.reg[self.sp]] = self.reg[3]
-                        self.reg[self.sp] -= 1
-                        self.ram[self.reg[self.sp]] = self.reg[4]
-                        self.reg[self.sp] -= 1
-                        self.ram[self.reg[self.sp]] = self.reg[5]
-                        self.reg[self.sp] -= 1
-                        self.ram[self.reg[self.sp]] = self.reg[6]
-                        self.pc = self.ram[0xf8]
+        elif instruction == PRN:
+            print(self.registers[operand_a])
+            self.pc += 2
 
-                continue
+        elif instruction == LDI:
+            self.registers[operand_a] = operand_b
+            self.pc += 3
 
-            else:
-                IR = self.ram[self.pc]
-                # print(bin(IR))
-    
-                if IR in self.branch_table:
-                    # print(self.branch_table[self.ram[self.pc]])
-                    self.branch_table[IR]()
+        elif instruction == MUL:
+            # if doing by alu
+            self.alu(instruction, operand_a, operand_b)
 
-                else:
-                    print(f'unknown command {IR}')
-                    self.running = False
+            # # if not doing by alu but by execute_instruction
+            # self.registers[operand_a] = self.registers[operand_a] * self.registers[operand_b]
+            # self.pc += 3
+
+        elif instruction == PUSH:
+            # 1. decrement the stack pointer
+            self.registers[SP] -= 1
+
+            # 2. store the operand in the stack
+            self.ram_write(self.registers[operand_a], self.registers[SP])
+            self.pc += 2
+
+        elif instruction == POP:
+            self.registers[operand_a] = self.ram_read(self.registers[SP])
+            self.registers[SP] += 1
+            self.pc += 2
+
+        else:
+            print("idk what to do.")
+            pass
